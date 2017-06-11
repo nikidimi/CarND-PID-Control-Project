@@ -28,14 +28,26 @@ std::string hasData(std::string s) {
   return "";
 }
 
-int main()
-{
+double run_for_max_steps(double Kp, double Ki, double Kd, int max_steps = 0) {
   uWS::Hub h;
 
   PID pid;
+  pid.Init(Kp, Ki, Kd);
+  
+  bool should_reset = true;
+  int steps = 0;
+  double error = 0;
+
   // TODO: Initialize the pid variable.
 
-  h.onMessage([&pid](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, uWS::OpCode opCode) {
+  h.onMessage([&pid, &steps, &max_steps, &h, &error](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, uWS::OpCode opCode) {
+    if (max_steps >  0 && steps > max_steps) {
+      error = pid.TotalError();
+      h.getDefaultGroup<uWS::SERVER>().terminate();
+      return;
+      
+    }
+    
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
     // The 2 signifies a websocket event
@@ -50,23 +62,21 @@ int main()
           double cte = std::stod(j[1]["cte"].get<std::string>());
           double speed = std::stod(j[1]["speed"].get<std::string>());
           double angle = std::stod(j[1]["steering_angle"].get<std::string>());
-          double steer_value;
-          /*
-          * TODO: Calcuate steering value here, remember the steering value is
-          * [-1, 1].
-          * NOTE: Feel free to play around with the throttle and speed. Maybe use
-          * another PID controller to control the speed!
-          */
-          
+          double steer_value = pid.CalculateSteeringAngle(cte);
+                   
           // DEBUG
-          std::cout << "CTE: " << cte << " Steering Value: " << steer_value << std::endl;
+          //std::cout << "CTE: " << cte << " Steering Value: " << steer_value << std::endl;
 
           json msgJson;
           msgJson["steering_angle"] = steer_value;
           msgJson["throttle"] = 0.3;
           auto msg = "42[\"steer\"," + msgJson.dump() + "]";
-          std::cout << msg << std::endl;
+          //std::cout << msg << std::endl;
           ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
+          
+          steps++;
+          
+
         }
       } else {
         // Manual driving
@@ -91,12 +101,17 @@ int main()
     }
   });
 
-  h.onConnection([&h](uWS::WebSocket<uWS::SERVER> ws, uWS::HttpRequest req) {
+  h.onConnection([&h, &should_reset](uWS::WebSocket<uWS::SERVER> ws, uWS::HttpRequest req) {
     std::cout << "Connected!!!" << std::endl;
+    if (should_reset) {
+      auto msg = "42[\"reset\"]";
+      std::cout << msg << std::endl;
+      ws.send(msg, strlen(msg), uWS::OpCode::TEXT);
+      should_reset = false;
+    }
   });
 
   h.onDisconnection([&h](uWS::WebSocket<uWS::SERVER> ws, int code, char *message, size_t length) {
-    ws.close();
     std::cout << "Disconnected" << std::endl;
   });
 
@@ -111,4 +126,59 @@ int main()
     return -1;
   }
   h.run();
+  
+  return error;
+}
+
+int main()
+{
+  /* The coefficients parameters for P, I and D are set here
+   * The P is used for turning the wheels (P)roportionally to the difference 
+   * between the current position and the desired
+   * The I is used for correcting bias and it is collected over time - if the car is always biased to one direction, 
+   * this part will countersteer in the opposite direction.
+   * The D is used for turning the wheels smoothly by using the difference 
+   * between the current P and the previous one, e.g. how fast are we closing to the desired position
+   */
+
+  int max_steps = 500;
+  double p[] = {0.1, 0.004, 0.3};
+  double dp[] = {0.5, 0.01, 0.5};
+  
+  //Uncomment to enable twiddle
+  
+  double best_error = run_for_max_steps(p[0], p[1], p[2], max_steps);
+  
+  while(dp[0] + dp[1] + dp[2] > 0.2) {
+    std::cout << "Error: " << best_error << " dp sum: " << dp[0] + dp[1] + dp[2] << " ";
+    std::cout << "Kp: " << p[0] << " Ki: " << p[1] << " Kd: " << p[2] << std::endl;
+    for(int i = 0; i < 3; i++) {
+      p[i] += dp[i];
+      double error = run_for_max_steps(p[0], p[1], p[2], max_steps);
+      
+      if (error < best_error) {
+        best_error = error;
+        dp[i] *= 1.1;
+      }
+      else {
+        p[i] -= 2.0 * dp[i];
+        error = run_for_max_steps(p[0], p[1], p[2], max_steps);
+        
+        if (error < best_error) {
+          best_error = error;
+          dp[i] *= 1.1;
+        }
+        else {
+          p[i] += dp[i];
+          dp[i] *= 0.9;
+        }
+      }
+    }
+  }
+  
+  
+  std::cout << "Kp: " << p[0] << " Ki: " << p[1] << " Kd: " << p[2] << std::endl;
+  
+  //Run forever when optimal parameters are reached
+  run_for_max_steps(p[0], p[1], p[2], 0);
 }
