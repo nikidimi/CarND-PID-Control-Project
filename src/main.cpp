@@ -146,7 +146,7 @@ int main()
   double dp[] = {0.5, 0.01, 0.5};
   
   //Uncomment to enable twiddle
-  
+  /*
   double best_error = run_for_max_steps(p[0], p[1], p[2], max_steps);
   
   while(dp[0] + dp[1] + dp[2] > 0.2) {
@@ -178,7 +178,7 @@ int main()
   
   
   std::cout << "Kp: " << p[0] << " Ki: " << p[1] << " Kd: " << p[2] << std::endl;
-  
+  */
   //Run forever when optimal parameters are reached
   run_for_max_steps(p[0], p[1], p[2], 0);
 }
